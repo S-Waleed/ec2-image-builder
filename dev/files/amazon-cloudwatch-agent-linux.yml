@@ -1,0 +1,248 @@
+# Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: Amazon CloudWatch Agent
+description: Installs the latest version of the Amazon CloudWatch agent. This component installs only the agent. You must take additional steps to configure and use the Amazon CloudWatch agent. For more information, see the documentation at https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/install-CloudWatch-Agent-on-EC2-Instance.html.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file '$FILE' does not exist. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      - name: IsOperatingSystemSupported
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ `echo "$RELEASE" | grep -Ev '^(amzn|centos|debian|rhel|sles|ubuntu)'` ]; then
+                echo "This component does not support '$RELEASE'. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+              # This component only supports aarch64 CPUs on Amazon Linux 2, RHEL, SUSE and Ubuntu
+              ARCH=$(uname -m)
+              if [[ `echo $ARCH` == 'aarch64' ]]; then
+                if [ `echo "$RELEASE" | grep -Ev '^(amzn\.2|rhel|sles|ubuntu)'` ]; then
+                  echo "This component does not support '$RELEASE' on ARM64 CPUs. Failing build."
+                  exit {{ build.Fail.outputs.stdout }}
+                fi
+              fi
+
+      - name: OperatingSystemArchitecture
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              ARCH=$(uname -m)
+              case $ARCH in
+                'x86_64')
+                  echo 'amd64'
+                  ;;
+                'aarch64')
+                  echo 'arm64'
+                  ;;
+                *)
+                  echo "The '$ARCH' architecture is not supported. Failing build."
+                  exit {{ build.Fail.outputs.stdout }}
+                  ;;
+              esac
+
+      - name: FileExtension
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ `echo "$RELEASE" | grep -E '^(amzn|centos|rhel|sles)'` ]; then
+                echo 'rpm'
+              elif [ `echo "$RELEASE" | grep -E '^(debian|ubuntu)'` ]; then
+                echo 'deb'
+              else
+                echo "The Operating System $RELEASE does not have a file extension specified. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      - name: Source
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              TYPE='{{ build.OperatingSystemArchitecture.outputs.stdout }}'
+              EXTENSION='{{ build.FileExtension.outputs.stdout }}'
+
+              if [ `echo "$RELEASE" | grep '^amzn'` ]; then
+                OS='amazon_linux'
+              elif [ `echo "$RELEASE" | grep '^centos'` ]; then
+                OS='centos'
+              elif [ `echo "$RELEASE" | grep '^debian'` ]; then
+                OS='debian'
+              elif [ `echo "$RELEASE" | grep '^rhel'` ]; then
+                OS='redhat'
+              elif [ `echo "$RELEASE" | grep '^sles'` ]; then
+                OS='suse'
+              elif [ `echo "$RELEASE" | grep '^ubuntu'` ]; then
+                OS='ubuntu'
+              else
+                echo "Operating System '$RELEASE' is not supported. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+              echo "https://s3.us-east-1.amazonaws.com/amazoncloudwatch-agent-us-east-1/$OS/$TYPE/latest/amazon-cloudwatch-agent.$EXTENSION"
+
+      - name: Installer
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              EXTENSION='{{ build.FileExtension.outputs.stdout }}'
+              echo "/tmp/amazon-cloudwatch-agent.$EXTENSION"
+
+      - name: InstallationRequirements
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              if [ `which apt 2> /dev/null` ]; then
+                sudo apt install --quiet -y curl 2> /dev/null
+              elif [ `which yum 2> /dev/null` ]; then
+                sudo yum install --quiet -y curl
+              elif [ `which zypper 2> /dev/null` ]; then
+                sudo zypper --quiet install -y curl
+              fi
+
+      - name: Download
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "Downloading '{{ build.Source.outputs.stdout }}' to '{{ build.Installer.outputs.stdout }}'"
+            - curl -s '{{ build.Source.outputs.stdout }}' -o '{{ build.Installer.outputs.stdout }}'
+
+      - name: Install
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              EXTENSION='{{ build.FileExtension.outputs.stdout }}'
+              INSTALLER='{{ build.Installer.outputs.stdout }}'
+              if [[ $EXTENSION == 'rpm' ]]; then
+                sudo rpm --upgrade $INSTALLER --force
+              elif [[ $EXTENSION == 'deb' ]]; then
+                sudo dpkg -i -E $INSTALLER
+              else
+                echo 'Installation not defined for $RELEASE. Failing build.'
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      - name: Cleanup
+        action: ExecuteBash
+        inputs:
+          commands:
+            - INSTALLER='{{ build.Installer.outputs.stdout }}'
+            - echo "Deleting '$INSTALLER'"
+            - rm $INSTALLER
+
+  - name: validate
+    steps:
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file '$FILE' does not exist. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+      - name: IsOperatingSystemSupported
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ `echo "$RELEASE" | grep -Ev '^(amzn|centos|debian|rhel|sles|ubuntu)'` ]; then
+                echo "This component does not support '$RELEASE'. Failing build."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+              # This component only supports aarch64 CPUs on Amazon Linux 2 or SUSE
+              ARCH=$(uname -m)
+              if [[ `echo $ARCH` == 'aarch64' ]]; then
+                if [ `echo "$RELEASE" | grep -Ev '^(amzn\.2|rhel|sles|ubuntu)'` ]; then
+                  echo "This component does not support '$RELEASE' on ARM64 CPUs. Failing build."
+                  exit {{ validate.Fail.outputs.stdout }}
+                fi
+              fi
+
+      - name: FindAmazonCloudWatchAgent
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ `echo "$RELEASE" | grep -E '^(amzn|centos|rhel)'` ]; then
+                yum list installed | grep '^amazon-cloudwatch-agent' 1> /dev/null
+                echo $?
+              elif [ `echo "$RELEASE" | grep -E '^sles'` ]; then
+                rpm -qa --last | grep '^amazon-cloudwatch-agent' 1> /dev/null
+                echo $?
+              elif [ `echo "$RELEASE" | grep -E '^(debian|ubuntu)'` ]; then
+                apt list --installed 2> /dev/null | grep '^amazon-cloudwatch-agent' 1> /dev/null
+                echo $?
+              else
+                echo {{ validate.Fail.outputs.stdout }}
+              fi
+
+      - name: AssertInstallation
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              SUCCESS='{{ validate.FindAmazonCloudWatchAgent.outputs.stdout }}'
+              if [[ $SUCCESS == 0 ]]; then
+                echo 'The Amazon CloudWatch Agent is installed.'
+              else
+                echo 'The Amazon CloudWatch Agent is not installed. Failing validation.'
+                exit {{ validate.Fail.outputs.stdout }}
+              fi

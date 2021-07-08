@@ -19,8 +19,8 @@ data "aws_subnet" "this" {
 }
 
 data "aws_security_group" "this" {
-filter {
+  filter {
     name   = "tag:Name"
-    values = ["sharepoint-default-security-group"]
-}
+    values = ["default-sec-group"]
+  }
 }

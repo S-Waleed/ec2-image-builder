@@ -1,0 +1,54 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ name: 'eni-attachment-test-linux'
+ description: 'The ENI attachment test creates an ENI and attaches it to the instance. It validates that the attached ENI has an IP address. It then detaches and deletes the ENI. To perform this test, an IAM policy with the following actions is required: ec2:AttachNetworkInterface, ec2:CreateNetworkInterface, ec2:CreateTags, ec2:DeleteNetworkInterface, ec2:DescribeNetworkInterfaces, ec2:DescribeNetworkInterfaceAttribute, and ec2:DetachNetworkInterface.'
+ schemaVersion: 1.0
+ phases:
+   - name: test
+     steps:
+       - name: OperatingSystemArchitecture
+         action: ExecuteBash
+         inputs:
+           commands:
+             - |
+               ARCH=$(uname -m)
+               if [ $ARCH == x86_64 ]; then
+                 echo 's3://ec2imagebuilder-managed-resources-us-east-1-prod/components/eni-attachment-test-linux/1.0.3/ENITest_Amd64'
+               elif [ $ARCH == aarch64 ]; then
+                 echo 's3://ec2imagebuilder-managed-resources-us-east-1-prod/components/eni-attachment-test-linux/1.0.3/ENITest_Arm64'
+               else
+                 echo "The $ARCH architecture is not supported by this component. Failing build."
+                 exit 1
+               fi
+       - name: MakeStagingDirectory
+         action: ExecuteBash
+         inputs:
+             commands:
+               - mkdir -p /var/tmp
+       - name: DownloadENITest
+         action: S3Download
+         inputs:
+           - source: '{{ test.OperatingSystemArchitecture.outputs.stdout }}'
+             destination: '/var/tmp/ENITest'
+       - name: SetExecutablePermissions
+         action: ExecuteBash
+         inputs:
+           commands:
+             - chmod +x /var/tmp/ENITest
+       - name: ExecuteENITest
+         action: ExecuteBinary
+         inputs:
+           path: /var/tmp/ENITest

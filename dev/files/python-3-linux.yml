@@ -1,0 +1,60 @@
+# Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: 'Python 3'
+description: 'Installs the Python 3 package using apt, yum, or zypper.'
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallPython3
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              if type -P apt &>/dev/null; then
+                  echo 'Installing python3 using apt...'
+                  sudo apt install -y python3
+              elif type -P yum &>/dev/null; then
+                  echo 'Installing python3 using yum...'
+                  sudo yum install -y python3
+              elif type -P zypper &>/dev/null; then
+                  echo 'Installing python3 using zypper...'
+                  sudo zypper install -y python3
+              fi
+
+  - name: validate
+    steps:
+      - name: ValidatePython3
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              PACKAGE=python3
+
+              if type -P $PACKAGE &>/dev/null; then
+                  echo "$PACKAGE exists."
+              else
+                  echo "$PACKAGE does not exist. Failing."
+                  exit 1
+              fi
+
+              VERSION=$($PACKAGE --version)
+              if [[ $? == 0 ]]; then
+                  echo "$VERSION was successfully invoked."
+              else
+                  echo "$PACKAGE could not be invoked. Failing."
+                  exit 1
+              fi

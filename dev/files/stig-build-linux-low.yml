@@ -1,0 +1,107 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: 'STIG-Build-Linux-Low'
+description: 'Applies the low severity STIG settings for Red Hat Enterprise Linux (RHEL) to Amazon Linux 2, RHEL 7, CentOS 7, RHEL 8, and CentOS 8 instances. For more information, see https://docs.aws.amazon.com/imagebuilder/latest/userguide/image-builder-stig.html.'
+schemaVersion: 1.0
+constants:
+  - FileName:
+      type: string
+      value: 'LinuxAWSConfigureSTIG_1_6_1.tgz'
+  - StagingPath:
+      type: string
+      value: '/tmp/__AWS__ConfigPrep'
+  - Version:
+      type: string
+      value: '3.3.1'
+  - Level:
+      type: string
+      value: 'Low'
+phases:
+  - name: build
+    steps:
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Outputs the Operating System for use throughout this document.
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file $FILE does not exist. Failing build."
+                exit 1
+              fi
+      - name: MakeStagingDIR
+        action: CreateFolder
+        inputs:
+          - path: '{{ StagingPath }}'
+      - name: Download_STIG
+        action: S3Download
+        inputs:
+          - source: s3://ec2imagebuilder-managed-resources-us-east-1-prod/components/stig-build-linux-low/{{ Version }}/{{ FileName }}
+            destination: '{{ StagingPath }}/{{ FileName }}'
+      - name: Unzip_STIG
+        action: ExecuteBash
+        onFailure: Continue
+        inputs:
+          commands:
+            - sudo tar -xvf '{{ StagingPath }}/{{ FileName }}' -C '{{ StagingPath }}/' || ( echo "File failed to extract properly. Unable to continue." ; exit 1; )
+      - name: AL2_ConfigureSTIG
+        action: ExecuteBash
+        onFailure: Continue
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^amzn\.2"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit 0
+              fi
+
+              sudo sh {{ StagingPath }}/AL2stigconfig.sh {{ Level }} {{ StagingPath }}/ || ( echo "Failed to run the STIG configuration script. Exiting." ; exit 1; )
+      - name: RHEL7_CentOS7_ConfigureSTIG
+        action: ExecuteBash
+        onFailure: Continue
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^((centos|rhel)\.7)"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit 0
+              fi
+
+              sudo sh {{ StagingPath }}/RHEL7stigconfig.sh {{ Level }} {{ StagingPath }}/ || ( echo "Failed to run the STIG configuration script. Exiting." ; exit 1; )
+      - name: RHEL8_CentOS8_ConfigureSTIG
+        action: ExecuteBash
+        onFailure: Continue
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^((centos|rhel)\.8)"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit 0
+              fi
+
+              sudo sh {{ StagingPath }}/RHEL8stigconfig.sh {{ Level }} {{ StagingPath }}/ || ( echo "Failed to run the STIG configuration script. Exiting." ; exit 1; )
+      - name: Cleanup
+        action: DeleteFolder
+        inputs:
+          - path: '{{ StagingPath }}'
+            force: true

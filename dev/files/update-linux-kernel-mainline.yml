@@ -1,0 +1,417 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: Update Linux Kernel Mainline
+description: Installs the latest mainline release of the Linux kernel. For Amazon Linux 2, this will install the
+  'kernel-ng' package from Amazon Linux Extras. For CentOS 7 and Red Hat Enterprise Linux 7 and 8, this will install
+  the 'kernel-ml' package from https://www.elrepo.org.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: CurrentKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - uname --kernel-release
+
+      - name: Succeed
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 0
+
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Outputs the Operating System for use throughout this document.
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file $FILE does not exist. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      - name: IsOperatingSystemSupported
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E '^(amzn\.2|centos\.7|rhel\.[78])'` ]; then
+                echo "This component does not support '$RELEASE'. Failing validation."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+              # This component only supports aarch64 CPUs on Amazon Linux 2
+              CURRENT_KERNEL='{{ build.CurrentKernelRelease.outputs.stdout }}'
+              if [ `echo $CURRENT_KERNEL | grep -E '\.aarch64$' | grep -Ev '.*\.amzn2\.aarch64$'` ]; then
+                echo "This component does not support '$RELEASE' on 'aarch64' CPUs. Failing validation."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      #######################################################
+      # Amazon Linux 2
+      #
+      - name: AmazonLinux2
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep '^amzn\.2'` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ build.Succeed.outputs.stdout }}
+              fi
+
+              sudo yum clean metadata
+
+              sudo amazon-linux-extras install -y kernel-ng || {
+                echo "Failed to install the 'kernel-ng' package from Amazon-Linux-Extras. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              }
+
+      #######################################################
+      # CentOS/RHEL
+      #
+      - name: CentOS7_RHEL78_InstallELRepo
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos\.7|rhel\.[78])"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ build.Succeed.outputs.stdout }}
+              fi
+
+              echo "Installing the ELRepo GPG Key."
+              sudo rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+
+              if [ `echo "$RELEASE" | grep -E "^(centos|rhel)\.7"` ]; then
+                REPO='https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm'
+              elif [ `echo "$RELEASE" | grep -E "^rhel\.8"` ]; then
+                REPO='https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm'
+              fi
+
+              repolist=$(yum repolist 2> /dev/null | grep -E "^\!?elrepo")
+              if [[ $? = 0 ]]; then
+                echo "The ELRepo repository is already installed."
+              else
+                echo "Installing the ELRepo repository."
+                sudo yum install -y $REPO || {
+                  echo "Failed to install the repository. Failing validation."
+                  exit {{ build.Fail.outputs.stdout }}
+                }
+              fi
+              sudo yum install -y yum-utils --quiet
+
+      - name: CentOS7_RHEL78_Install
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos\.7|rhel\.[78])"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ build.Succeed.outputs.stdout }}
+              fi
+
+              sudo yum update -y || {
+                echo "Failed to perform a yum update. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              }
+              sudo yum --enablerepo=elrepo-kernel install -y kernel-ml || {
+                echo "Failed to install kernel-ml. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              }
+
+      # CentOS 7 and RHEL 7 require updating the default boot option with the latest kernel
+      - name: CentOS7_RHEL7_FindLatestAvailableKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos|rhel)\.7"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ build.Succeed.outputs.stdout }}
+              fi
+
+              # Use repoquery to find the latest available kernel version for the kernel-ml package
+              PACKAGE='kernel-ml'
+              props='^(Version|Release|Architecture)'
+              values=$(repoquery --enablerepo=elrepo-kernel -qi $PACKAGE --quiet --envra | grep -E "$props")
+
+              VERSION_REGEX="Version\s*:\s*[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*"
+              version=$(echo $values | grep -Eo $VERSION_REGEX | awk '{print $3}')
+
+              RELEASE_REGEX="Release\s:\s[a-z0-9.]*"
+              release=$(echo $values | grep -Eo "$RELEASE_REGEX" | awk '{print $3}')
+
+              ARCHITECTURE_REGEX="Architecture:\s.*"
+              architecture=$(echo $values | grep -Eo "$ARCHITECTURE_REGEX" | awk '{print $2}')
+
+              echo "$version-$release.$architecture"
+
+      - name: CentOS7_RHEL7_UpdateGrub
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos|rhel)\.7"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ build.Succeed.outputs.stdout }}
+              fi
+
+              LATEST_KERNEL='{{ build.CentOS7_RHEL7_FindLatestAvailableKernelRelease.outputs.stdout }}'
+
+              # Find the GRUB boot option that matches the $LATEST_KERNEL version
+              boot_option=$(sudo awk -F\' '$1=="menuentry " {print i++ " : " $2}' /etc/grub2.cfg | grep $LATEST_KERNEL) || {
+                echo "Failed to find the GRUB boot menu option for $LATEST_KERNEL. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              }
+              menu_number=$(echo ${boot_option::1}) || {
+                echo "Failed to find the GRUB boot menu option number for $LATEST_KERNEL. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              }
+
+              echo "Setting the default boot option as $boot_option"
+              sudo grub2-set-default $menu_number
+
+      - name: Reboot
+        action: Reboot
+
+  #######################################################
+  # Validate Phase
+  #######################################################
+  - name: validate
+    steps:
+      - name: CurrentKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - uname --kernel-release
+
+      - name: Succeed
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 0
+
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Outputs the Operating System for use throughout this document.
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file $FILE does not exist. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+      - name: IsOperatingSystemSupported
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E '^(amzn\.2|centos\.7|rhel\.[78])'` ]; then
+                echo "This component does not support '$RELEASE'. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+              # This component only supports 'aarch64' when running on 'amzn2'
+              CURRENT_KERNEL='{{ validate.CurrentKernelRelease.outputs.stdout }}'
+              if [ `echo $CURRENT_KERNEL | grep -E '\.aarch64$' | grep -Ev '\.amzn2\.aarch64$'` ]; then
+                echo "This component does not support '$RELEASE' on 'aarch64' CPUs. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+      #######################################################
+      # Amazon Linux 2
+      #
+      - name: AL2_FindLatestAvailableKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep '^amzn\.2'` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              sudo amazon-linux-extras enable kernel-ng &> /dev/null || {
+                echo "Failed to enable the kernel-ng package. Failing validation."
+              }
+
+              sudo yum clean metadata &> /dev/null
+
+              ARCH=$(uname -m)
+              YUM_LIST=$(yum list | grep "^kernel.$ARCH.*amzn2extra-kernel-ng")
+              if [ $? != 0 ]; then
+                echo "Unable to find the 'kernel.$ARCH' package from Amazon Linux Extras using 'yum list'."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+              version_release=$(echo $YUM_LIST | awk '{print $(NF-1)}') || {
+                echo 'Unable to find the kernel version and release. Failing validation.'
+                exit {{ validate.Fail.outputs.stdout }}
+              }
+              architecture=$(echo $YUM_LIST | grep -o "^kernel\.[a-z0-9_]*" | sed -r 's/kernel.//') || {
+                echo 'Unable to find the kernel architecture. Failing validation.'
+                exit {{ validate.Fail.outputs.stdout }}
+              }
+
+              echo "$version_release.$architecture"
+
+      #######################################################
+      # CentOS/RHEL
+      #
+      - name: CentOS7_RHEL78_InstallELRepo
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos\.7|rhel\.[78])"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              echo "Installing the ELRepo GPG Key."
+              sudo rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
+
+              if [ `echo "$RELEASE" | grep -E "^(centos|rhel)\.7"` ]; then
+                REPO='https://www.elrepo.org/elrepo-release-7.el7.elrepo.noarch.rpm'
+              elif [ `echo "$RELEASE" | grep -E "^rhel\.8"` ]; then
+                REPO='https://www.elrepo.org/elrepo-release-8.el8.elrepo.noarch.rpm'
+              fi
+
+              repolist=$(yum repolist 2> /dev/null | grep -E "^\!?elrepo")
+              if [[ $? = 0 ]]; then
+                echo "The ELRepo repository is already installed."
+              else
+                echo "Installing the ELRepo repository."
+                sudo yum install -y $REPO || {
+                  echo "Failed to install the repository. Failing validation."
+                  exit {{ validate.Fail.outputs.stdout }}
+                }
+              fi
+              sudo yum install -y yum-utils --quiet
+
+      - name: CentOS7_RHEL7_FindLatestAvailableKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(centos|rhel)\.7"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              # Use repoquery to find the latest available kernel version for the kernel-ml package
+              PACKAGE='kernel-ml'
+              props='^(Version|Release|Architecture)'
+              values=$(repoquery --enablerepo=elrepo-kernel -qi $PACKAGE --quiet --envra | grep -E "$props")
+
+              version_regex="Version\s*:\s*[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*"
+              version=$(echo $values | grep -Eo $version_regex | awk '{print $3}')
+
+              release_regex="Release\s:\s[a-z0-9.]*"
+              release=$(echo $values | grep -Eo "$release_regex" | awk '{print $3}')
+
+              architecture_regex="Architecture:\s.*"
+              architecture=$(echo $values | grep -Eo "$architecture_regex" | awk '{print $2}')
+
+              echo "$version-$release.$architecture"
+
+      - name: RHEL8_FindLatestAvailableKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^rhel\.8"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              # Use dnf repoquery to find the latest available kernel version for the kernel-ml package
+              PACKAGE='kernel-ml'
+              REGEX='[[:digit:]]*\.[[:digit:]]*\.[[:digit:]]*-[a-z0-9.]*\..*'
+              sudo dnf repoquery --enablerepo=elrepo-kernel $PACKAGE --latest-limit 1 2> /dev/null | grep -Eo $REGEX || {
+                echo "Failed to find the latest kernel. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              }
+
+      - name: AssertKernelRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ validate.OperatingSystemRelease.outputs.stdout }}'
+              if [ ! `echo "$RELEASE" | grep -E "^(amzn\.2|centos\.[78]|rhel\.[78])"` ]; then
+                echo 'Skipping this step for the current operating system.'
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              if [ `echo $RELEASE | grep -E "^amzn\.2"` ]; then
+                EXPECTED_RELEASE='{{ validate.AL2_FindLatestAvailableKernelRelease.outputs.stdout }}'
+              elif [ `echo $RELEASE | grep -E "^(centos|rhel)\.7"` ]; then
+                EXPECTED_RELEASE='{{ validate.CentOS7_RHEL7_FindLatestAvailableKernelRelease.outputs.stdout }}'
+              elif [ `echo $RELEASE | grep -E "^rhel\.8"` ]; then
+                EXPECTED_RELEASE='{{ validate.RHEL8_FindLatestAvailableKernelRelease.outputs.stdout }}'
+              else
+                echo "Skipping this step for the current operating system."
+                exit {{ validate.Succeed.outputs.stdout }}
+              fi
+
+              KERNEL_RELEASE='{{ validate.CurrentKernelRelease.outputs.stdout }}'
+
+              if [[ $KERNEL_RELEASE == $EXPECTED_RELEASE ]]; then
+                echo 'The system is running the expected kernel version.'
+                echo "Current:  $KERNEL_RELEASE"
+                echo "Expected: $EXPECTED_RELEASE"
+              else
+                echo 'The system is not running the expected kernel version.'
+                echo "Current:  $KERNEL_RELEASE"
+                echo "Expected: $EXPECTED_RELEASE"
+                echo 'Failing validation.'
+                exit {{ validate.Fail.outputs.stdout }}
+              fi

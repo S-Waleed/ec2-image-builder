@@ -1,12 +1,12 @@
-resource "aws_imagebuilder_infrastructure_configuration" "example" {
-  description                   = "example description"
+resource "aws_imagebuilder_infrastructure_configuration" "this" {
+  description                   = "Simple infrastructure configuration"
   instance_profile_name         = var.ec2_iam_role_name
-  instance_types                = ["t2.nano", "t3.micro"]
-  key_pair                      = aws_key_pair.example.key_name
-  name                          = "example"
-  security_group_ids            = [aws_security_group.example.id]
-#   sns_topic_arn                 = aws_sns_topic.example.arn
-  subnet_id                     = aws_subnet.main.id
+  instance_types                = ["t2.micro"]
+  key_pair                      = var.aws_key_pair_name
+  name                          = "amazon-linux-infr"
+  security_group_ids            = [data.aws_security_group.this.id]
+#   sns_topic_arn                 = aws_sns_topic.this.arn
+  subnet_id                     = data.aws_subnet.this.id
   terminate_instance_on_failure = true
 
   logging {

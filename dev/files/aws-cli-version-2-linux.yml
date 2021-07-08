@@ -1,0 +1,219 @@
+# Copyright 2020 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+name: AWS CLI version 2
+description: Installs the latest version of the AWS CLI version 2, and creates the symlink /usr/bin/aws pointing to the installed application. For more information, review the user guide at https://docs.aws.amazon.com/cli/latest/userguide/.
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file $FILE does not exist. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+
+      - name: InstallationRequirements
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              RELEASE='{{ build.OperatingSystemRelease.outputs.stdout }}'
+              if [ `which apt 2> /dev/null` ]; then
+                sudo apt install  --quiet -y curl unzip
+              elif [ `which yum 2> /dev/null` ]; then
+                sudo yum install --quiet -y curl unzip
+              elif [ `which zypper 2> /dev/null` ]; then
+                sudo zypper --quiet install -y curl unzip
+              fi
+
+      - name: InstallationType
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              BINARY=/usr/local/aws-cli/v2/current/bin/aws
+              if [ -x $BINARY ]; then
+                  echo 'update'
+              else
+                  echo 'install'
+              fi
+
+      - name: OperatingSystemArchitecture
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              ARCH=$(uname -m)
+              if [ `echo $ARCH | grep -Ev '^(aarch64|x86_64)'` ]; then
+                echo "The '$ARCH' architecture is not supported. Failing build."
+                exit {{ build.Fail.outputs.stdout }}
+              fi
+              echo $ARCH
+
+      - name: Source
+        action: ExecuteBash
+        inputs:
+          commands:
+            - ARCH='{{ build.OperatingSystemArchitecture.outputs.stdout }}'
+            - echo "https://awscli.amazonaws.com/awscli-exe-linux-$ARCH.zip"
+
+      - name: ZipFile
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo '/tmp/awscliv2.zip'
+
+      - name: Download
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              URL='{{ build.Source.outputs.stdout }}'
+              ZIP='{{ build.ZipFile.outputs.stdout }}'
+              echo "Downloading '$URL' to '$ZIP'"
+              curl -s $URL -o $ZIP
+
+      - name: ExtractPath
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo '/tmp/aws_cli_version_2'
+
+      - name: ExtractZipFile
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              EXTRACT_DIR='{{ build.ExtractPath.outputs.stdout }}'
+              sudo rm -Rf $EXTRACT_DIR
+              mkdir -p $EXTRACT_DIR
+
+              ZIP='{{ build.ZipFile.outputs.stdout }}'
+              echo "Extracting '$ZIP' to '$EXTRACT_DIR'"
+              unzip -q $ZIP -d $EXTRACT_DIR
+
+      - name: Install
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              EXTRACT_DIR='{{ build.ExtractPath.outputs.stdout }}'
+              if [ '{{ build.InstallationType.outputs.stdout' == 'install' ]; then
+                echo "Invoking '$EXTRACT_DIR/aws/install'"
+                sudo $EXTRACT_DIR/aws/install
+              else
+                echo "Invoking '$EXTRACT_DIR/aws/install --update'"
+                sudo $EXTRACT_DIR/aws/install --update
+              fi
+
+      - name: CreateSymlink
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              SYMLINK='/usr/bin/aws'
+              TARGET='/usr/local/bin/aws'
+              echo "Creating the symlink '$SYMLINK' pointing to '$TARGET'"
+              sudo ln -s -f $TARGET $SYMLINK
+
+      - name: CleanupDirectories
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              DIRECTORY='{{ build.ExtractPath.outputs.stdout }}'
+              if [ -d $DIRECTORY ]; then
+                echo "Deleting '$DIRECTORY'"
+                sudo rm -Rf $DIRECTORY
+              fi
+
+      - name: CleanupFiles
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              FILE='{{ build.ZipFile.outputs.stdout }}'
+              if [ -f $FILE ]; then
+                echo "Deleting '$FILE'"
+                sudo rm $FILE
+              fi
+
+  - name: validate
+    steps:
+      - name: Fail
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo 1
+
+      - name: OperatingSystemRelease
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              FILE=/etc/os-release
+              if [ -e $FILE ]; then
+                . $FILE
+                echo "$ID${VERSION_ID:+.${VERSION_ID}}"
+              else
+                echo "The file $FILE does not exist. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+      - name: FindAWSCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              which aws
+              if [[ $? == 1 ]]; then
+                echo "The AWS CLI is not installed. Failing validation."
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
+
+      - name: Version
+        action: ExecuteBinary
+        inputs:
+          path: aws
+          arguments:
+            - '--version'
+
+      - name: Assert
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              echo '{{ validate.Version.outputs.stdout }}' | grep '^aws-cli\/2\.' 1> /dev/null
+              if [[ $? == 0 ]]; then
+                echo 'The AWS CLI is running the desired version.'
+              else
+                echo 'The AWS CLI is not running the desired version. Failing validation.'
+                exit {{ validate.Fail.outputs.stdout }}
+              fi
