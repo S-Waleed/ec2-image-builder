@@ -36,9 +36,18 @@ data "aws_iam_policy_document" "image_builder" {
   statement {
     effect = "Allow"
     actions = [
+      "s3:List",
       "s3:GetObject"
     ]
-    resources = ["arn:aws:s3:::ec2imagebuilder*"]
+    resources = ["*"]
+  }
+
+  statement {
+    effect = "Allow"
+    actions = [
+      "s3:PutObject"
+    ]
+    resources = ["arn:aws:s3:::${var.aws_s3_log_bucket}/image-builder/*"]
   }
 
   statement {

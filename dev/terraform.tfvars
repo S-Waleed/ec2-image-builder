@@ -1,0 +1,5 @@
+aws_region            = "us-east-1"
+aws_s3_log_bucket     = "cloudly-engineer-dev-logs"
+aws_cli_profile       = "dev"
+aws_s3_bucket_object  = "cloudly-engineer-dev-misc"
+image_receipe_version = "1.0.0"

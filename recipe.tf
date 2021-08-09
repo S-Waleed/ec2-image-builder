@@ -15,5 +15,5 @@ resource "aws_imagebuilder_image_recipe" "this" {
 
   name         = "amazon-linux-recipe"
   parent_image = "arn:${data.aws_partition.current.partition}:imagebuilder:${data.aws_region.current.name}:aws:image/amazon-linux-2-x86/x.x.x"
-  version      = "1.0.0"
+  version      = var.image_receipe_version
 }
