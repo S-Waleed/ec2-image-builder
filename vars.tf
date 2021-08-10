@@ -29,3 +29,7 @@ variable "aws_key_pair_name" {
 variable "image_receipe_version" {
   type = string
 }
+
+variable "ami_name_tag" {
+  type = string
+}
