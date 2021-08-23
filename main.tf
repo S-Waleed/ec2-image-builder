@@ -1,6 +1,6 @@
 # Create the EC2 IAM role to use for the image
 module "image_builder_role" {
-  source = "git@gitlab.com:cloudly-engineer/aws/tf-modules/iam-ec2-role.git"
+  source = "git@github.com:masterwali/tf-module-iam-ec2-role.git"
 
   ec2_iam_role_name  = var.ec2_iam_role_name
   policy_description = "IAM ec2 instance profile for the Image Builder instances."

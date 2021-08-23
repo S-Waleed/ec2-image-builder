@@ -17,6 +17,6 @@ resource "aws_imagebuilder_infrastructure_configuration" "this" {
   }
 
   tags = {
-    foo = "bar"
+    Name = "amazon-linux-infr"
   }
 }
