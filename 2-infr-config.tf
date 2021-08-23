@@ -5,7 +5,6 @@ resource "aws_imagebuilder_infrastructure_configuration" "this" {
   key_pair              = var.aws_key_pair_name
   name                  = "amazon-linux-infr"
   security_group_ids    = [data.aws_security_group.this.id]
-  #   sns_topic_arn                 = aws_sns_topic.this.arn
   subnet_id                     = data.aws_subnet.this.id
   terminate_instance_on_failure = true
 
