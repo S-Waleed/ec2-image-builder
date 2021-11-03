@@ -20,4 +20,9 @@ resource "aws_imagebuilder_image_pipeline" "this" {
   tags = {
     "Name" = "${var.ami_name_tag}-pipeline"
   }
+
+  depends_on = [
+    aws_imagebuilder_image_recipe.this,
+    aws_imagebuilder_infrastructure_configuration.this
+  ]
 }

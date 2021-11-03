@@ -4,7 +4,10 @@ resource "aws_imagebuilder_image" "this" {
   infrastructure_configuration_arn = aws_imagebuilder_infrastructure_configuration.this.arn
 
   depends_on = [
-    data.aws_iam_policy_document.image_builder
+    data.aws_iam_policy_document.image_builder,
+    aws_imagebuilder_image_recipe.this,
+    aws_imagebuilder_distribution_configuration.this,
+    aws_imagebuilder_infrastructure_configuration.this
   ]
 }
 
@@ -26,6 +29,14 @@ resource "aws_imagebuilder_image_recipe" "this" {
   name         = "amazon-linux-recipe"
   parent_image = "arn:${data.aws_partition.current.partition}:imagebuilder:${data.aws_region.current.name}:aws:image/amazon-linux-2-x86/x.x.x"
   version      = var.image_receipe_version
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  depends_on = [
+    aws_imagebuilder_component.cw_agent
+  ]
 }
 
 resource "aws_s3_bucket_object" "cw_agent_upload" {

@@ -11,7 +11,7 @@ resource "aws_imagebuilder_distribution_configuration" "this" {
       name = "example-{{ imagebuilder:buildDate }}"
 
       launch_permission {
-        user_ids = ["123456789012"]
+        # user_ids = ["123456789012"]
       }
     }
     region = var.aws_region
