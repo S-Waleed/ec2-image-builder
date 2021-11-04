@@ -1,9 +1,10 @@
 resource "aws_imagebuilder_image_pipeline" "this" {
+  name                             = var.ami_name_tag
+  status                           = "ENABLED"
+  description                      = "Creates an AMI."
   image_recipe_arn                 = aws_imagebuilder_image_recipe.this.arn
   infrastructure_configuration_arn = aws_imagebuilder_infrastructure_configuration.this.arn
-  name                             = "amazon-linux-baseline"
-  status                           = "ENABLED"
-  description                      = "Creates an Amazon Linux 2 image."
+  distribution_configuration_arn   = aws_imagebuilder_distribution_configuration.this.arn
 
   schedule {
     schedule_expression = "cron(0 8 ? * tue)"
@@ -20,4 +21,9 @@ resource "aws_imagebuilder_image_pipeline" "this" {
   tags = {
     "Name" = "${var.ami_name_tag}-pipeline"
   }
+
+  depends_on = [
+    aws_imagebuilder_image_recipe.this,
+    aws_imagebuilder_infrastructure_configuration.this
+  ]
 }
